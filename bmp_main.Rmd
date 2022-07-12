@@ -41,7 +41,7 @@ The aim of this project is to build a Bayesian Model for predicting the probabil
 
 In order to do this, we will implement a Logistic Regression to model the binary response (0 = "income" <=50K, 1 = "income" > 50K) and a Multivariate Gaussian Copula Model, which will try to explain the correlations and conditional dependencies between the covariates.
 
-```{r data, include=FALSE}
+```{r data, cache=TRUE, include=FALSE}
 # Import data
 
 adult<-na.omit(
@@ -478,7 +478,7 @@ params = c("beta", "gamma")
 
 ## Fit BUGS model with JAGS
 
-```{r jags_run, echo=TRUE}
+```{r jags_run, cache=TRUE, echo=TRUE}
 model_posterior = jags(data = model_data,
                       inits = init_values,
                       parameters.to.save = params,
@@ -850,7 +850,7 @@ cop.cor_post_25 + cop.cor_post_75
 
 We are also interested in the “regression coefficients”
 
-$$\beta_{j|-j} = \Psi_{j,-j} (\Psi_{-j,-j})^{-1}$$
+$$\beta_{j|-j} = \Sigma_{j,-j} (\Sigma_{-j,-j})^{-1}$$
 which for each variable $j$ is a vector of length $j-1$ that describes how the conditional mean of $Z_j$ depends on the remaining variables $Z_{-j}$
 
 A 95% quantile-based confidence interval is obtained for each $\beta_{j,k}$. If the confidence interval does not contain zero, this means that there is strong evidence of a conditional dependence, with a “+” or a “−” indicating the sign of the posterior median. If the interval does contain zero, there is no conditional dependence between the variables.
@@ -881,7 +881,8 @@ According to the posterior probability of inclusion, the most important, i.e. th
 
 Furthermore, we can say that all of them have a positive impact on the posterior probabilities of being classified in the **Income** class ">50K", according to the data coming from the Adult Census of 1994.
 
-The results obtained from the **Multivariate gaussian copula model** 
+The results obtained from the **Multivariate gaussian copula model** show that the covariates generally have a low, positive correlation among each other. We find the highest correlations with respect to the **"income"** response variable. 
+Additionally, the regression coefficients given by the model, describe how the conditional mean of the response variable **"Income"** depends on the remaining variables. In the detail, we have that all the variables have a positive effect on the response. While the highest median value recorded concerns the variable **education_num** which measure the total years of education, follow the **Age**, the amount of working hours per week **hours_per_week** and **capital_gain**. 
 
 
 
