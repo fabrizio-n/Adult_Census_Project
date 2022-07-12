@@ -143,8 +143,7 @@ rownam <- sample(1:nrow(adult), 5000)
 adult.train <- adult[rownam,]
 
 #
-
-adult.train.compl <- adult[-rownam,]
+adult.train.compl <- adult[-rownam,] 
 adult.train.compl.min <- filter(adult.train.compl, adult.train.compl$income == ">50K")
 adult.train.min.sample <- sample(1:nrow(adult.train.compl.min), 2518)
 adult.train.min.add <- adult.train.compl.min[adult.train.min.sample,]
@@ -538,18 +537,8 @@ knitr::kable(cbind(t(round(geweke[1:10], 4))), align = "l")
 knitr::kable(cbind(t(round(geweke[11:18], 4))), align = "l")
 ```
 
-
 <br>
 <br>
-
-```{r Geweke3, echo=FALSE}
-knitr::kable(cbind(t(round(geweke[19:27], 4))), align = "l")
-```
-
-```{r Geweke4, echo=FALSE}
-knitr::kable(cbind(t(round(geweke[28:35], 4))), align = "l")
-```
-
 
 ### Effective sample size
 
@@ -571,22 +560,6 @@ knitr::kable(essbeta2, align = "l")
 <br>
 <br>
 <br>
-
-```{r ESS gamma, echo=FALSE}
-# GAMMA
-
-ess.gamma <-  effectiveSize(jags_post.mcmc)[19:35]
-
-essgammaord <- c(ess.gamma[1],ess.gamma[10:17], ess.gamma[2:9])
-colessgammaord <- c(colnames(ess.gamma)[1], colnames(ess.gamma)[10:17], colnames(ess.gamma)[2:9])
-
-essgamma1 <- rbind(colessgammaord[1:9],round(essgammaord[1:9]))
-essgamma2 <- rbind(colessgammaord[10:17], round(essgammaord[10:17]))
-
-knitr::kable(essgamma1, align = "l")
-knitr::kable(essgamma2, align = "l")
-```
-
 
 ## {-}
 
@@ -789,7 +762,7 @@ inverse-Wishart distribution, which would give an inverse-Wishart full condition
 
 The posterior distribution will be based on:
 
-$$\begin{aligned} \Sigma &\sim \mathit{inverse-Wishart}(\nu_0,S_0^{-1}) \\ Z_1,...,Z_n &\sim \mathit{multivariate \; normal}(0, \Sigma) \\ Y_{i,j} &= g_j(Z_{i,j}) \end{aligned}$$
+$$\begin{aligned} \Sigma &\sim \mathit{inverse-Wishart}\;(\nu_0,S_0^{-1}) \\ Z_1,...,Z_n &\sim \mathit{multivariate \; normal}\;(0, \Sigma) \\ Y_{i,j} &= g_j(Z_{i,j}) \end{aligned}$$
 
 <br>
 <br>
@@ -885,7 +858,8 @@ A 95% quantile-based confidence interval is obtained for each $\beta_{j,k}$. If 
 <br>
 
 ```{r cop QR summ, echo=FALSE}
-fit.QR <- summary(fit)$QR
+fit.QR <- summary(fit)$QR[c(17:20),]
+
 knitr::kable(fit.QR, caption = "95% quantiles for regression coefficients")
 ```
 
