@@ -1,0 +1,923 @@
+---
+title: "Bayesian analysis of Adult Census data"
+author: "Fabrizio Niro 5106988"
+date: "18/07/2022"
+output:
+  html_document:
+    df_print: paged
+  html_notebook:
+    theme: readable
+subtitle: Bayesian Modelling
+---
+
+```{css, echo=FALSE}
+h1 {
+  text-align: center;
+}
+
+h3, h4 {
+  text-align: right;
+}
+```
+
+```{r libraries, message=FALSE, warning=FALSE, include=FALSE}
+library(tidyverse)
+library(reshape2)
+library(R2jags)
+library(sbgcop)
+library(bayesplot)
+library(esquisse)
+library(patchwork)
+library(ROCit)
+library(cvms)
+```
+
+# Introduction
+
+The dataset object of this analysis is "Adult Census" dataset. It is also known as "Adult" dataset. It has been donated to UCI from Ronny Kohavi and Barry Becker in 1996. The data has been extracted by Barry Becker from the 1994 Census database.
+The data used in this analysis is a random sample  of 8518 observations, from the original dataset of 30000 observations, splitted in train (7518) and test (1000) datasets. 
+
+The aim of this project is to build a Bayesian Model for predicting the probability that a person has an income greater than 50K dollars in a year. 
+
+In order to do this, we will implement a Logistic Regression to model the binary response (0 = "income" <=50K, 1 = "income" > 50K) and a Multivariate Gaussian Copula Model, which will try to explain the correlations and conditional dependencies between the covariates.
+
+```{r data, include=FALSE}
+# Import data
+
+adult<-na.omit(
+  read.table(
+  "https://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.data", 
+                    sep = ',', fill = F, strip.white = T, na.strings = "?", stringsAsFactors=T))
+
+colnames(adult) <- c('age', 'workclass', 'fnlwgt', 'education', 
+                     'education_num', 'marital_status', 'occupation',
+                     'relationship', 'race', 'sex', 
+                     'capital_gain', 'capital_loss', 'hours_per_week',
+                     'native_country', 'income')
+
+# drop finalwgt, education, marital_status variables
+adult <- adult[,-c(3,4,6,7)]
+
+# combine race in black, white, other
+adult$race <- gsub('Amer-Indian-Eskimo', 'Other', 
+                   adult$race)
+adult$race <- gsub('Asian-Pac-Islander', 'Other', 
+                   adult$race)
+adult$race <- as.factor(adult$race)
+
+# combine native countries into native region
+Asia_East <- c("Cambodia", "China", "Hong", "Laos", "Thailand",
+               "Japan", "Taiwan", "Vietnam")
+Asia_Central <- c("India", "Iran")
+Central_America <- c("Cuba", "Guatemala", "Jamaica", "Nicaragua", 
+                     "Puerto-Rico",  "Dominican-Republic", "El-Salvador", 
+                     "Haiti", "Honduras", "Mexico", "Trinadad&Tobago")
+South_America <- c("Ecuador", "Peru", "Columbia")
+Europe_West <- c("England", "Germany", "Holand-Netherlands", "Ireland", 
+                 "France", "Greece", "Italy", "Portugal", "Scotland")
+Europe_East <- c("Poland", "Yugoslavia", "Hungary")
+
+adult <- mutate(adult, 
+       native_region = ifelse(native_country %in% Asia_East, "East-Asia",
+                ifelse(native_country %in% Asia_Central, "Central-Asia",
+                ifelse(native_country %in% Central_America, "Central-America",
+                ifelse(native_country %in% South_America, "South-America",
+                ifelse(native_country %in% Europe_West, "Europe-West",
+                ifelse(native_country %in% Europe_East, "Europe-East",
+                       "United-States")))))))
+
+adult$native_country <- NULL
+adult$native_region <- as.factor(adult$native_region)
+
+
+# combine government work classes
+adult$workclass <- gsub('Federal-gov', 'Government', 
+                   adult$workclass)
+adult$workclass <- gsub('Local-gov', 'Government', 
+                   adult$workclass)
+adult$workclass <- gsub('State-gov', 'Government', 
+                             adult$workclass)
+
+# combine self-employed
+adult$workclass <- gsub('Self-emp-inc', 'Self-employed', 
+                   adult$workclass)
+adult$workclass <- gsub('Self-emp-not-inc', 'Self-employed', 
+                             adult$workclass)
+
+# combine other/unknown
+adult$workclass <- gsub('Never-worked', 'Other', adult$workclass)
+adult$workclass <- gsub('Without-pay', 'Other', adult$workclass)
+
+adult$workclass <- as.factor(adult$workclass)
+
+
+# relevel adult$workclass
+adult$workclass <- 
+  factor(adult$workclass, 
+         c('Self-employed', 'Private', 'Government', 'Other') )
+
+
+# adding negative capital_gain instead of capital_loss variable
+adult$capital_gain <- adult$capital_gain - adult$capital_loss
+
+adult$capital_loss <- NULL
+
+
+
+# ordering columns
+col_order <- c("sex", "age", "race", "native_region", 
+               "education_num", "workclass", "hours_per_week",
+               "capital_gain", "income")
+
+adult <- adult[,col_order]
+
+
+
+# Splitting dataset
+set.seed(123)
+
+
+# Train data
+rownam <- sample(1:nrow(adult), 5000)
+
+adult.train <- adult[rownam,]
+
+#
+
+adult.train.compl <- adult[-rownam,]
+adult.train.compl.min <- filter(adult.train.compl, adult.train.compl$income == ">50K")
+adult.train.min.sample <- sample(1:nrow(adult.train.compl.min), 2518)
+adult.train.min.add <- adult.train.compl.min[adult.train.min.sample,]
+adult.train <- rbind(adult.train, adult.train.min.add)
+idx <- sample(1:nrow(adult.train), nrow(adult.train))
+adult.train <- adult.train[idx,]
+
+rownames(adult.train) <- seq_len(nrow(adult.train))
+
+
+# Test data
+rownam2 <- sample(1:nrow(adult.train.compl), 1000)
+
+adult.test <- adult.train.compl[rownam2,]
+rownames(adult.test) <- seq_len(nrow(adult.test))
+
+
+
+# Train model matrix
+# recode income to binary for logit regression
+adult.train$income <- ifelse(adult.train$income == "<=50K", 0, 1)
+
+y = adult.train$income
+X.tmp = adult.train [,c(1:8)]
+
+# Convert factor variables into dummies
+X.tmp = model.matrix(y ~., X.tmp)
+
+X = X.tmp
+
+
+
+# Test model matrix
+# recode income to binary for logit regression
+adult.test$income <- ifelse(adult.test$income == "<=50K", 0, 1)
+
+y.t = adult.test$income
+X.tmp.t = adult.test [,c(1:8)]
+
+# Convert factor variables into dummies
+X.tmp.t = model.matrix(y.t ~., X.tmp.t)
+
+X.t = X.tmp.t
+
+
+
+#
+rm(adult.train.compl, adult.train.compl.min,
+   adult.train.min.add, Asia_Central, 
+   Asia_East, Central_America, col_order, 
+   Europe_East, Europe_West, rownam, rownam2, South_America, 
+   adult, X.tmp.t, idx, adult.train.min.sample)
+```
+
+<br>
+
+# Dataset description
+
+The variable **Income** (binary) depends on the data through 8 predictors:
+
+- **Sex**: Factor variable with levels "Female" and "Male"
+
+- **Age**: Integer variable containing the age of the person
+- **Race**: Factor variable with levels "Black", "White", "Other"
+- **Native_region**: Factor variable which contains the region of birth of the person, it has levels: "United States", "Central-America", "South-America", "Europe-West", "Europe-East", "Asia-West", "Asia-East"
+- **Education_num**: Integer variable which contains the total amount of education years of the person
+- **Workclass**: Factor variable which describes the sector of working, it has levels: "Self-employed", "Private", "Government", "Other"
+- **Hours_per_week**: Integer variable related to the total working hours per week 
+- **Capital_gain**: Integer variable which reporting the total capital gain of the person in a year. It can take negative values for capital losses.
+
+<br>
+
+```{r head_data, echo=FALSE}
+head(adult.train)
+```
+
+<br>
+
+```{r plots, echo=FALSE, warning=FALSE}
+
+income_plot <- ggplot(adult.train) +
+  aes(x = income, fill = sex) +
+  geom_bar() +
+  scale_fill_viridis_d(option = "viridis", direction = 1) +
+  labs(title = "Income: <=50K, >50K") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 12L),
+        axis.title.x=element_blank(), axis.title.y = element_blank()) +
+  facet_wrap(vars(workclass)) 
+
+sex_plot <- ggplot(adult.train) +
+  aes(x = sex, fill = sex) +
+  geom_bar() +
+  scale_fill_viridis_d(option = "viridis", direction = 1) +
+  labs(title = "Sex") +
+  theme_minimal() +
+  theme(
+    legend.position = "top",
+    plot.title = element_text(size = 12L),
+    axis.title.x=element_blank(), axis.title.y = element_blank()
+  )
+
+age_plot <- ggplot(adult.train) +
+  aes(x = "", y = age, fill = sex, group = sex) +
+  geom_boxplot() +
+  scale_fill_viridis_d(option = "viridis", direction = 1) +
+  labs(title = "Age") +
+  theme_minimal() +
+  theme(
+    legend.position = "top",
+    plot.title = element_text(size = 12L),
+    axis.title.x=element_blank(), axis.title.y = element_blank()
+  )
+
+edu_plot <- ggplot(adult.train) +
+  aes(x = education_num, fill = sex) +
+  geom_histogram(bins = 10L) +
+  scale_fill_viridis_d(option = "viridis", direction = 1) +
+  labs(title = "Education") +
+  theme_minimal() +
+  theme(
+    legend.position = "top",
+    plot.title = element_text(size = 12L),
+    axis.title.x=element_blank(), axis.title.y = element_blank()
+  )
+
+native_plot <- ggplot(adult.train) +
+  aes(x = native_region, fill = race) +
+  geom_bar() +
+  scale_fill_viridis_d(option = "viridis", direction = 1) +
+  labs(title = "Native Region") +
+  theme_minimal() +
+  theme(
+    legend.position = "top",
+    plot.title = element_text(size = 12L),
+    axis.title.x=element_blank(), axis.title.y = element_blank())
+
+capgain_plot <- ggplot(adult.train) +
+  aes(x = capital_gain, fill = workclass) +
+  geom_histogram(bins = 10L) +
+  scale_fill_viridis_d(option = "viridis", direction = 1) +
+  labs(title = "Capital gain") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 12L),
+        axis.title.x=element_blank(), axis.title.y = element_blank()) +
+  xlim(-20000, 20000)
+```
+
+<br>
+
+```{r income_plot, echo=FALSE, fig.height=5, fig.width=10, warning=FALSE}
+income_plot
+```
+
+<br>
+
+```{r sex_age plots, echo=FALSE, fig.height=5, fig.width=10, warning=FALSE}
+sex_plot + age_plot
+```
+
+<br>
+
+```{r edu_cap plots, echo=FALSE, fig.height=5, fig.width=10, warning=FALSE}
+edu_plot + capgain_plot
+```
+
+<br>
+
+```{r native plot, fig.height=5, fig.width=10, echo=FALSE}
+native_plot
+```
+
+<br>
+<br>
+<br>
+
+# Logistic regression with "Spike and Slab" prior
+
+In order to model the effects of the predictors on the response, we will implement a **General Linear Model for binary data**, with **logistic link function**.
+Furthermore, we will use a **"Spike and Slab" Prior** in order to perform model selection, as in the case of GLMs it is not possible to to compute the **posterior model probability**, which implicitly performs predictor selection.
+
+
+
+Assume the response variable $Y$ is binary, $Y \in {0,1}$
+
+$$Y_i | \pi_i \sim Bern(\pi_i) \qquad i=1,...,n$$
+
+$$\pi_i = h(\beta^T x_i)$$
+where $h(\cdot)$ is an Inverse-Link function which guarantees that $E(Y|\cdot) \in \{0,1\}$
+
+for the cas eof logistic regression:
+
+$$logit(\pi_i) = log \bigg( \frac{\pi_i}{1 - \pi_i} \bigg) = \eta = \beta^Tx_i$$
+the logistic function is then found as:
+
+$$\frac{\pi_i}{1 - \pi_i} = \eta$$
+
+$$\pi_i = \frac{\exp(\beta^Tx_i)}{1 + \exp(\beta^Tx_i)}$$
+
+The likelihood is:
+
+$$p(y | \beta) = \prod_{i=1}^n p(y_i | \pi_i)   = \prod_{i=1}^n \pi^{y_i}(1 - \pi_i)^{1-y_i} = \prod_{i=1}^n h(\beta^Tx_i)^{y_i} (1-h(\beta^Tx_i))^{1-y_i}$$
+
+While the Prior on $\beta = (\beta_1,...,\beta_p)^T$ is: 
+
+$$\begin{aligned} \beta_j &\sim N(\beta_{0j}, \sigma^2_{0j}) \\ p(\beta) &= \prod_{j=1}^p dN(\beta_j | \beta_{0j}, \sigma^2_{0j}) \end{aligned}$$
+
+Which is not conjugate to the model. The following posterior distribution should be therefore approximated using a Metropolis Hastings algorithm.
+
+$$p(\beta | y) \propto p(y | \beta)p(\beta)$$
+<br>
+
+## "Spike and Slab" Prior
+
+Consider a GLM of the form
+
+$$E(Y|x) = h(\beta_1 X_1 + ... + \beta_pX_p)$$
+
+we introduce a $(p,1)$ binary vector $\gamma = (\gamma_1,...,\gamma_p)^T$ such that
+
+$$\gamma_j = \begin{cases} 1 & \mbox{if} \qquad X_j \quad \mbox{is included in the model}\\ 0 & \mbox{if} \qquad X_j \quad \mbox{is not included in the model} \end{cases}$$
+
+so that $\gamma_j$ "controls" the inclusion of X_j among the predictors.
+
+We treat $\gamma$ as a parameter and do posterior inference on it
+We then write:
+
+$$E(Y|x) = h(\gamma_1\beta_1 X_1 + ... + \gamma_p\beta_pX_p)$$
+So we now need to assign priors both to $\gamma = (\gamma_1,...,\gamma_p)^T$ and $\beta = (\beta_1,...,\beta_p)^T$ 
+
+that are:
+
+$$\gamma_j \sim Bern(w) \qquad \beta_j \sim N(\beta_{0j},\sigma^2_{0j})$$
+
+<br>
+<br>
+<br>
+
+## Metropolis Hastings algorithm
+
+The Metropolis Hastings algorithm is a generalization of Gibbs and Metropolis algorithm, general methods used to approximate functions or distribution $f(x)$. In the case of Bayesian statistics they are widely implemented to approximate posterior distributions.
+
+In this case we need to approximate the vector of parameter $\beta_j = (\beta_\,...,\beta_p)$ starting from initial values $\beta_1^{(1)},...,\beta_p^{(1)}$
+
+Given $S = 5000$ the number of MCMC iterations,
+
+<br>
+
+| For $s = 1,...,S$
+|    For $j = 1,...,p$
+
+<br>
+    
+1. Propose $\beta^*_j \sim q(\beta_j|\beta_j^{(s)})$ from a Normal $dN(\beta_j^*| \beta_j^{(s)},\delta^2_j)$ centered at current value $\beta_j^{(s)}$ (mean) and with fixed $\delta^2_j$ (variance)
+
+<br>
+
+2. Compute $r_j = \frac{p(\beta_j^*,\beta_{-j}^{(s)} | y)}{p(\beta_j^s,\beta_{-j}^{(s)} | y)} \frac{q(\beta_j^{(s)} | \beta_j^*)}{q(\beta_j^{(*)} | \beta_j^s)}$ which is the ratio of posteriors, that does not require the computation of $p(y)$, the marginal likelihood, which is not available analytically.
+
+<br>
+
+3. Set $\beta_j^{(s+1)} = \begin{cases} \beta_j^* & \mbox{with probability} \quad min\{r_j,1\} \\ \beta_j^{(s)} & \mbox{with probability} \quad 1 - min\{r_j,1\} \end{cases}$
+
+<br>
+
+Finally, we obtain the dependent sequence
+
+$\beta = \{\beta^{(1)},...,\beta^{(S)}\}$ with $\beta^{(s)} = \{\beta^{(s)}_1,...,\beta^{(S)}_p\}$
+   
+<br>
+<br>
+
+In order to implement it, the first step is expanding factor variables into dummies and adding the Intercept
+
+<br>
+
+## Model matrix
+
+```{r head_model_matrix, echo=FALSE, warning=FALSE}
+X <- as.data.frame(X)
+head(X)
+```
+
+```{r jags_data, include=FALSE}
+model_data = with(X, list(y = y, X = X, n = length(y), p = ncol(X)))
+```
+ 
+<br>
+<br>
+
+## BUGS model
+
+```{r jags_model}
+logistic_model = function(){
+  
+ # Likelihood
+  
+  for(i in 1:n){
+    
+    y[i] ~ dbern(pi[i])
+    
+    logit(pi[i]) = (gamma * beta) %*% X [i,]
+    
+  }
+  
+ # Priors
+  
+  for(j in 1:p){
+
+    beta[j] ~ dnorm(0, 0.01)
+    
+    gamma[j] ~ dbern(w) 
+  }
+  
+  w ~ dbeta(2,1)
+  
+}
+```
+
+```{r jags_init_values, include=FALSE}
+init_values = function(){
+  
+  list(beta = rep(0, ncol(X)), gamma = rep(1, ncol(X)))
+  
+}
+
+params = c("beta", "gamma")
+```
+
+<br>
+<br>
+
+## Fit BUGS model with JAGS
+
+```{r jags_run, echo=TRUE}
+model_posterior = jags(data = model_data,
+                      inits = init_values,
+                      parameters.to.save = params,
+                      model.file = logistic_model,
+                      n.iter = 10000,
+                      n.chain = 1,
+                       n.burnin = 5000,
+                      n.thin = 2)
+
+``` 
+
+```{r extract jags, include=FALSE}
+out = model_posterior$BUGSoutput
+
+## Extract samples from the posterior of beta and gamma
+
+beta_post  = out$sims.list$beta
+gamma_post = out$sims.list$gamma
+
+# convert as mcmc
+jags_post.mcmc <- as.mcmc(model_posterior)
+
+
+colnames(beta_post) <- colnames(X)
+color_scheme_set("viridis")
+```
+
+<br>
+<br>
+
+## MCMC diagnostics {.tabset}
+
+### Autocorrelation
+
+```{r acf plots, echo=FALSE, fig.height=7, fig.width=10,}
+mcmc_acf(beta_post)
+```
+
+### Traceplot
+
+```{r traceplots, echo=FALSE, fig.height=7, fig.width=10}
+mcmc_trace(beta_post)
+```
+
+### Geweke test
+
+```{r Geweke, echo=FALSE}
+geweke <- geweke.diag(jags_post.mcmc)[1]
+geweke <- geweke[[1]]
+geweke <- geweke$z
+
+knitr::kable(cbind(t(round(geweke[1:10], 4))), align = "l")
+```
+
+```{r Geweke2, echo=FALSE}
+knitr::kable(cbind(t(round(geweke[11:18], 4))), align = "l")
+```
+
+
+<br>
+<br>
+
+```{r Geweke3, echo=FALSE}
+knitr::kable(cbind(t(round(geweke[19:27], 4))), align = "l")
+```
+
+```{r Geweke4, echo=FALSE}
+knitr::kable(cbind(t(round(geweke[28:35], 4))), align = "l")
+```
+
+
+### Effective sample size
+
+```{r ESS beta, echo=FALSE}
+# BETA
+
+ess.beta <-  effectiveSize(jags_post.mcmc)[1:18]
+
+essbetaord <- c(ess.beta[1],ess.beta[10:17], ess.beta[2:9], ess.beta[18])
+colessbetaord <- c(colnames(ess.beta)[1], colnames(ess.beta)[10:17], colnames(ess.beta)[2:9], colnames(ess.beta)[18])
+
+essbeta1 <- rbind(colessbetaord[1:9],round(essbetaord[1:9]))
+essbeta2 <- rbind (colessbetaord[10:18], round(essbetaord[10:18]))
+
+knitr::kable(essbeta1, align = "l")
+knitr::kable(essbeta2, align = "l")
+```
+
+<br>
+<br>
+<br>
+
+```{r ESS gamma, echo=FALSE}
+# GAMMA
+
+ess.gamma <-  effectiveSize(jags_post.mcmc)[19:35]
+
+essgammaord <- c(ess.gamma[1],ess.gamma[10:17], ess.gamma[2:9])
+colessgammaord <- c(colnames(ess.gamma)[1], colnames(ess.gamma)[10:17], colnames(ess.gamma)[2:9])
+
+essgamma1 <- rbind(colessgammaord[1:9],round(essgammaord[1:9]))
+essgamma2 <- rbind(colessgammaord[10:17], round(essgammaord[10:17]))
+
+knitr::kable(essgamma1, align = "l")
+knitr::kable(essgamma2, align = "l")
+```
+
+
+## {-}
+
+<br>
+<br>
+<br>
+
+## Posterior distribution of coefficients
+
+```{r dens beta_post, echo=FALSE, fig.height=7, fig.width=10}
+# Posterior distribution of beta
+mcmc_dens(beta_post)
+```
+
+<br>
+<br>
+
+## Posterior interval estimates from MCMC draws
+
+```{r post intervals, echo=FALSE, fig.height=7, fig.width=10}
+# Plot central (quantile-based) posterior interval estimates from MCMC draws.
+
+mcmc_intervals(beta_post)
+```
+
+<br>
+<br>
+
+## Posterior coefficients summary
+
+```{r post summary, echo=FALSE}
+post_sum <- out$summary
+beta_dev_sum <- post_sum[1:18,]
+rownames(beta_dev_sum) <- c(colnames(X),"Deviance")
+
+knitr::kable(beta_dev_sum, caption = "posterior regression coefficients summary")
+```
+
+```{r post probinc, include=FALSE}
+S = nrow(gamma_post)
+
+## Estimate the posterior probability of inclusion of each predictor Xj
+## i.e. proportion of times gammaj = 1
+
+prob_inclusion = colMeans(gamma_post)
+```
+
+<br>
+<br>
+
+## Posterior probability of inclusion
+
+```{r post probinc plot, echo=FALSE, fig.height=5, fig.width=10}
+df_probinc <- data.frame(rownames = names(X), probs = prob_inclusion)
+
+ggplot(df_probinc) + geom_bar(aes(x = reorder(rownames,-probs),y = probs, fill = probs), 
+                              stat = 'identity') + 
+  scale_fill_viridis_c(name="Posterior probability \nof inclusion") +
+  theme_minimal() + 
+  theme(axis.text.x = element_text(angle = 30, vjust = 1, hjust=1), 
+        axis.title.x=element_blank(), axis.title.y = element_blank())
+```
+
+<br>
+<br>
+
+## Model evaluation on test data
+
+```{r model test}
+S       <- nrow(X.t)
+eta     <- matrix(NA, nrow = nrow(beta_post), ncol = S)
+pi.star <- matrix(NA, nrow = nrow(beta_post), ncol = S)
+
+for(s in 1:S){
+  
+  eta [,s] <- (gamma_post * beta_post) %*% X.t [s,] #Test model matrix
+  
+  pi.star [,s] <- exp(eta [,s]) / (1 + exp(eta [,s]))
+   
+}
+
+predicted <- colMeans(pi.star)
+
+
+# We can consider a raster of values for threshold
+thresh <- seq(0.2, 0.5, 0.001)
+Sensitivity <- numeric(length(thresh))
+Specificity <- numeric(length(thresh))
+
+for(j in seq(along=thresh)){
+  yhat <- ifelse(predicted >= thresh[j],1,0)
+  xx <- table(y.t, yhat)
+  
+  Specificity[j] <- xx[1,1] / (xx[1,1]+xx[1,2])
+  Sensitivity[j] <- xx[2,2] / (xx[2,1]+xx[2,2])
+}
+
+# Youden index
+J=which.max(Specificity+Sensitivity-1)
+
+# Set threshold corresponding to Youden Index
+predicted <- ifelse(predicted >= thresh[J], 1,0)
+```
+
+<br>
+
+## ROC curve 
+
+```{r roc curve, echo=FALSE, fig.height=5, fig.width=10}
+plot(rocit(predicted, y.t, method = "bin"), col = c("#440154", "#21918c"), lwd = 4)
+```
+
+<br>
+
+## Confusion matrix
+
+```{r conf matrix, echo=FALSE, fig.height=5, fig.width=10}
+d_binomial <- tibble(target = y.t, predicted = predicted)
+eval <- evaluate(d_binomial,
+                 target_col = "target",
+                 prediction_cols = "predicted",
+                 type = "binomial")
+
+conf_mat <- eval$`Confusion Matrix`[[1]]
+
+plot_confusion_matrix(conf_mat, palette="Blues")
+```
+
+<br>
+<br>
+<br>
+<br>
+
+# Multivariate Gaussian copula model
+
+```{r copula data, include=FALSE}
+adult.cop <- as_tibble(adult.train[,c(2,5,7,8,9)])
+
+
+fit <- sbgcop.mcmc(Y=adult.cop)
+```
+
+```{r cop plots code, include=FALSE}
+age.cop.plot <- ggplot(adult.cop) +
+  aes(x = age) +
+  geom_density(adjust = 1L, fill = "#440154") +
+  labs(title = "Age") +
+  theme_minimal()
+
+cap.gain.cop.plot <- ggplot(adult.cop) +
+  aes(x = capital_gain) +
+  geom_density(adjust = 1L, fill = "#440154") +
+  labs(title = "Capital gain") +
+  theme_minimal()
+
+ednum.cop.plot <- ggplot(adult.cop) +
+  aes(x = education_num) +
+  geom_density(adjust = 1L, fill = "#440154") +
+  labs(title = "Total years of education") +
+  theme_minimal()
+
+hpw.cop.plot <- ggplot(adult.cop) +
+  aes(x = hours_per_week) +
+  geom_density(adjust = 1L, fill = "#440154") +
+  labs(title = "Work hours per week") +
+  theme_minimal()
+```
+
+In general, we may be interested in the relationships among all of the variables in a dataset.
+To explain them we will use a multivariate normal model that is appropriate for all types of ordinal data, both numeric and non-numeric. Letting $Y_1,...,Y_n$ be i.i.d. random samples from a p-variate population, our latent normal model is:
+
+$$\begin{aligned} Z_1,...,Z_n &\sim multivariate \; normal(0, \Psi) \\ Y_{i,j} &= g_j(Z_{i,j}) \end{aligned}$$
+
+<br>
+
+```{r cop plots, echo=FALSE, fig.height=5, fig.width=10}
+age.cop.plot + cap.gain.cop.plot + ednum.cop.plot + hpw.cop.plot
+```
+
+<br>
+
+where $g_1,...,g_p$ are non-decreasing functions and $\Psi$ is a correlation matrix, having diagonal entries equal to 1. In this model, the matrix $\Psi$ represents the
+joint dependencies among the variables and the functions $g1,...,gp$ represent their marginal distributions.
+
+The marginal distributions of the $Y_j's$ are fully determined by the $g_j's$ and do
+not depend on the matrix $\Psi$. A model having separate parameters for the
+univariate marginal distributions and the multivariate dependencies is generally called a copula model.
+
+In this case the dependence is described by a multivariate gaussian distribution, so we have a multivariate gaussian copula model.
+
+In this case, the functions $g_1,...,g_p$ are nuisance parameters and the parameter of interest is $\Psi$
+
+As there is no simple conjugate class of prior distributions for our correlation matrix $\Psi$, let's consider the alternative:
+
+$$Z_1,...,Z_n \sim multivariate \; normal(0, \Sigma)$$
+
+where $\Sigma$ is an arbitrary covariance matrix, not restricted to be a correlation
+matrix like $\Psi$. In this case a natural prior distribution for $\Sigma$ would be an
+inverse-Wishart distribution, which would give an inverse-Wishart full conditional distribution and thus make posterior inference available via Gibbs sampling.
+
+The posterior distribution will be based on:
+
+$$\begin{aligned} \Sigma &\sim \mathit{inverse-Wishart}(\nu_0,S_0^{-1}) \\ Z_1,...,Z_n &\sim \mathit{multivariate \; normal}(0, \Sigma) \\ Y_{i,j} &= g_j(Z_{i,j}) \end{aligned}$$
+
+<br>
+<br>
+
+```{r cop hetmaps code, echo=FALSE}
+Cpsamp <- fit$C.psamp
+
+cor_array_mean <- apply(Cpsamp, 1:2, mean)
+cor_mean <- melt(cor_array_mean)
+colnames(cor_mean) <- c("x", "y", "value")
+
+# Posterior mean of correlation coefficients
+cop.cor_post_mean <- ggplot(cor_mean, aes(x = x, y = y, fill = value)) + 
+  geom_tile() + scale_fill_viridis_c(name="Correlation", guide="none") +
+  labs(title = "Mean") +
+  geom_text(aes(label = round(value, 2)), color = "white", size = 4) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 30, vjust = 1, hjust=1),
+        plot.title = element_text(size = 12L),
+        axis.title.x=element_blank(), 
+        axis.title.y = element_blank()) + coord_fixed()
+
+
+# Posterior quantiles of correlation coefficients
+Cpquant <- qM.sM(Cpsamp, quantiles = c(0.025, 0.5, 0.975))
+Cpquant.25 <- melt(Cpquant[,,1])
+colnames(Cpquant.25) <- c("x", "y", "value")
+Cpquant.50 <- melt(Cpquant[,,2])
+colnames(Cpquant.50) <- c("x", "y", "value")
+Cpquant.75 <- melt(Cpquant[,,3])
+colnames(Cpquant.75) <- c("x", "y", "value")
+
+
+cop.cor_post_25 <- ggplot(Cpquant.25, aes(x = x, y = y, fill = value)) + 
+  geom_tile() + scale_fill_viridis_c(name="Correlation", guide="none") +
+  labs(title = "2.5% quantile") +
+  geom_text(aes(label = round(value, 2)), color = "white", size = 4) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 30, vjust = 1, hjust=1),
+                                   plot.title = element_text(size = 12L),
+        axis.title.x=element_blank(), 
+        axis.title.y = element_blank()) + coord_fixed()
+
+cop.cor_post_50 <- ggplot(Cpquant.50, aes(x = x, y = y, fill = value)) + 
+  geom_tile() + scale_fill_viridis_c(name="Correlation") +
+  labs(title = "Median") +
+  geom_text(aes(label = round(value, 2)), color = "white", size = 4) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 30, vjust = 1, hjust=1),
+        axis.text.y = element_blank(),
+        plot.title = element_text(size = 12L),
+        axis.title.x=element_blank(), 
+        axis.title.y = element_blank()) + coord_fixed()
+
+cop.cor_post_75 <- ggplot(Cpquant.75, aes(x = x, y = y, fill = value)) + 
+  geom_tile() + scale_fill_viridis_c(name="Correlation") +
+  labs(title = "97.5% quantile") +
+  geom_text(aes(label = round(value, 2)), color = "white", size = 4) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 30, vjust = 1, hjust=1),
+        axis.text.y = element_blank(),
+        plot.title = element_text(size = 12L),
+        axis.title.x=element_blank(), 
+        axis.title.y = element_blank()) + coord_fixed()
+
+```
+
+## Posterior mean and median of correlation coefficients
+
+```{r cop hmpas mm, echo=FALSE, fig.height=5, fig.width=10}
+# Posterior mean of correlation coefficients
+cop.cor_post_mean + cop.cor_post_50
+```
+<br>
+<br>
+
+## Posterior quantiles of correlation coefficients
+
+```{r cop hmaps 2575, echo=FALSE, fig.height=5, fig.width=10}
+cop.cor_post_25 + cop.cor_post_75 
+```
+
+<br>
+<br>
+
+We are also interested in the “regression coefficients”
+
+$$\beta_{j|-j} = \Psi_{j,-j} (\Psi_{-j,-j})^{-1}$$
+which for each variable $j$ is a vector of length $j-1$ that describes how the conditional mean of $Z_j$ depends on the remaining variables $Z_{-j}$
+
+A 95% quantile-based confidence interval is obtained for each $\beta_{j,k}$. If the confidence interval does not contain zero, this means that there is strong evidence of a conditional dependence, with a “+” or a “−” indicating the sign of the posterior median. If the interval does contain zero, there is no conditional dependence between the variables.
+
+<br>
+
+```{r cop QR summ, echo=FALSE}
+fit.QR <- summary(fit)$QR
+knitr::kable(fit.QR, caption = "95% quantiles for regression coefficients")
+```
+
+<br>
+<br>
+<br>
+
+# Conclusion
+
+From the **logistic regression** we can conclude that, among the variables object of the analysis, there are many predictors that play an important role in classifying the income of people in less or more than 50K dollars per year. 
+According to the posterior probability of inclusion, the most important, i.e. the variables that are always included in the model, are:
+
+- **Age** 
+- **Capital_gain**
+- **Education_num**
+- **hours_per_week**
+- **raceWhite**
+- **sexMale**
+
+Furthermore, we can say that all of them have a positive impact on the posterior probabilities of being classified in the **Income** class ">50K", according to the data coming from the Adult Census of 1994.
+
+The results obtained from the **Multivariate gaussian copula model** 
+
+
+
+
+
+
+
+
+
+
+
+
+
