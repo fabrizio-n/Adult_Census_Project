@@ -20,6 +20,11 @@ h3, h4 {
 }
 ```
 
+<style>
+body {
+text-align: justify}
+</style>
+
 ```{r libraries, message=FALSE, warning=FALSE, include=FALSE}
 library(tidyverse)
 library(reshape2)
@@ -334,7 +339,7 @@ $$Y_i | \pi_i \sim Bern(\pi_i) \qquad i=1,...,n$$
 $$\pi_i = h(\beta^T x_i)$$
 where $h(\cdot)$ is an Inverse-Link function which guarantees that $E(Y|\cdot) \in \{0,1\}$
 
-for the cas eof logistic regression:
+in the case of logistic regression:
 
 $$logit(\pi_i) = log \bigg( \frac{\pi_i}{1 - \pi_i} \bigg) = \eta = \beta^Tx_i$$
 the logistic function is then found as:
@@ -369,7 +374,8 @@ $$\gamma_j = \begin{cases} 1 & \mbox{if} \qquad X_j \quad \mbox{is included in t
 so that $\gamma_j$ "controls" the inclusion of X_j among the predictors.
 
 We treat $\gamma$ as a parameter and do posterior inference on it
-We then write:
+
+The expectation of $Y|x$ becomes:
 
 $$E(Y|x) = h(\gamma_1\beta_1 X_1 + ... + \gamma_p\beta_pX_p)$$
 So we now need to assign priors both to $\gamma = (\gamma_1,...,\gamma_p)^T$ and $\beta = (\beta_1,...,\beta_p)^T$ 
@@ -577,12 +583,13 @@ mcmc_dens(beta_post)
 <br>
 <br>
 
-## Posterior interval estimates from MCMC draws
+## Central 50% and 95% Posterior Credible intervals
 
 ```{r post intervals, echo=FALSE, fig.height=7, fig.width=10}
-# Plot central (quantile-based) posterior interval estimates from MCMC draws.
+mcmc_intervals(beta_post,prob = 0.5, # % intervals
+               prob_outer = 0.95, # 95%
+               point_est = "mean")
 
-mcmc_intervals(beta_post)
 ```
 
 <br>
@@ -879,7 +886,7 @@ According to the posterior probability of inclusion, the most important, i.e. th
 - **raceWhite**
 - **sexMale**
 
-Furthermore, we can say that all of them have a positive impact on the posterior probabilities of being classified in the **Income** class ">50K", according to the data coming from the Adult Census of 1994.
+Furthermore, we can say that all of them have a positive impact on the posterior probabilities of being classified in the **Income** class ">50K". An important result is that the Native region doesn't seem to have inluence, as all the intervals contain zero and the posterior probability of inclusion is relatively low, according to the data coming from the Adult Census of 1994. Also **workclassPrivate** and **workclassGovernment** seem to have small to no impact on the parameter, while **workclassOther**, which includes also Self-Employed workers, is included in more than 80% of the cases, even though the posterior 95% credible interval contains the zero.
 
 The results obtained from the **Multivariate gaussian copula model** show that the covariates generally have a low, positive correlation among each other. We find the highest correlations with respect to the **"income"** response variable. 
 Additionally, the regression coefficients given by the model, describe how the conditional mean of the response variable **"Income"** depends on the remaining variables. In the detail, we have that all the variables have a positive effect on the response. While the highest median value recorded concerns the variable **education_num** which measure the total years of education, follow the **Age**, the amount of working hours per week **hours_per_week** and **capital_gain**. 
