@@ -39,12 +39,13 @@ library(cvms)
 
 # Introduction
 
-The dataset object of this analysis is "Adult Census" dataset. It is also known as "Adult" dataset. It has been donated to UCI from Ronny Kohavi and Barry Becker in 1996. The data has been extracted by Barry Becker from the 1994 Census database.
-The data used in this analysis is a random sample  of 8518 observations, from the original dataset of 30000 observations, splitted in train (7518) and test (1000) datasets. 
+<br>
+
+The dataset object of this analysis is the "Adult Census" dataset. It is also known as "Adult" dataset. It has been donated to UCI from Ronny Kohavi and Barry Becker in 1996. The data has been extracted by Barry Becker from the 1994 Census database.
 
 The aim of this project is to build a Bayesian Model for predicting the probability that a person has an income greater than 50K dollars in a year. 
 
-In order to do this, we will implement a Logistic Regression to model the binary response (0 = "income" <=50K, 1 = "income" > 50K) and a Multivariate Gaussian Copula Model, which will try to explain the correlations and conditional dependencies between the covariates.
+In order to do this, we will implement a Logistic Regression to model the binary response (0 = "income" <=50K, 1 = "income" > 50K) and a Multivariate Gaussian Copula Model, for the dependencies among the variables and the parameters describing their univariate marginal distributions.
 
 ```{r data, cache=TRUE, include=FALSE}
 # Import data
@@ -204,8 +205,12 @@ rm(adult.train.compl, adult.train.compl.min,
 ```
 
 <br>
+<br>
+<br>
 
 # Dataset description
+
+<br>
 
 The variable **Income** (binary) depends on the data through 8 predictors:
 
@@ -324,8 +329,13 @@ native_plot
 <br>
 <br>
 <br>
+<br>
+<br>
+<br>
 
 # Logistic regression with "Spike and Slab" prior
+
+<br>
 
 In order to model the effects of the predictors on the response, we will implement a **General Linear Model for binary data**, with **logistic link function**.
 Furthermore, we will use a **"Spike and Slab" Prior** in order to perform model selection, as in the case of GLMs it is not possible to to compute the **posterior model probability**, which implicitly performs predictor selection.
@@ -482,7 +492,7 @@ params = c("beta", "gamma")
 <br>
 <br>
 
-## Fit BUGS model with JAGS
+## Approximate Posterior distribution using JAGS
 
 ```{r jags_run, cache=TRUE, echo=TRUE}
 model_posterior = jags(data = model_data,
@@ -583,13 +593,13 @@ mcmc_dens(beta_post)
 <br>
 <br>
 
-## Central 50% and 95% Posterior Credible intervals
+## Credible Intervals
 
 ```{r post intervals, echo=FALSE, fig.height=7, fig.width=10}
-mcmc_intervals(beta_post,prob = 0.5, # % intervals
-               prob_outer = 0.95, # 95%
-               point_est = "mean")
-
+mcmc_intervals(beta_post) + labs(
+  title = "Posterior Central Intervals for $$\beta$$",
+  subtitle = "with median point estimates, 50% and 95% intervals"
+)
 ```
 
 <br>
@@ -602,7 +612,7 @@ post_sum <- out$summary
 beta_dev_sum <- post_sum[1:18,]
 rownames(beta_dev_sum) <- c(colnames(X),"Deviance")
 
-knitr::kable(beta_dev_sum, caption = "posterior regression coefficients summary")
+knitr::kable(beta_dev_sum)
 ```
 
 ```{r post probinc, include=FALSE}
@@ -699,6 +709,8 @@ plot_confusion_matrix(conf_mat, palette="Blues")
 <br>
 <br>
 <br>
+<br>
+<br>
 
 # Multivariate Gaussian copula model
 
@@ -735,10 +747,13 @@ hpw.cop.plot <- ggplot(adult.cop) +
   theme_minimal()
 ```
 
-In general, we may be interested in the relationships among all of the variables in a dataset.
-To explain them we will use a multivariate normal model that is appropriate for all types of ordinal data, both numeric and non-numeric. Letting $Y_1,...,Y_n$ be i.i.d. random samples from a p-variate population, our latent normal model is:
+<br>
 
-$$\begin{aligned} Z_1,...,Z_n &\sim multivariate \; normal(0, \Psi) \\ Y_{i,j} &= g_j(Z_{i,j}) \end{aligned}$$
+We are now interested in the relationship among some of the most "important" variables in the "Adult Census" dataset. For normally distributed data, it is possible to explain them through a multivariate normal model. In this specific case, as shown by the plot below, the variables of interest are not normally distributed. 
+
+We can therefore express these non-normal random variables as functions of unobserved, "latent" normally distributed random variables.
+
+Then we will implement a Multivariate normal model, that is appropriate for all types of ordinal data, both numeric and non-numeric. 
 
 <br>
 
@@ -748,28 +763,80 @@ age.cop.plot + cap.gain.cop.plot + ednum.cop.plot + hpw.cop.plot
 
 <br>
 
-where $g_1,...,g_p$ are non-decreasing functions and $\Psi$ is a correlation matrix, having diagonal entries equal to 1. In this model, the matrix $\Psi$ represents the
+Letting $Y_1,...,Y_n$ be i.i.d. random samples from a p-variate population, our latent normal model is:
+
+$$\begin{aligned} Z_1,...,Z_n &\sim multivariate \; normal(0, \Psi) \\ Y_{i,j} &= g_j(Z_{i,j}) \end{aligned}$$
+
+where the $g_1,...,g_p$ functions that relate the value of $Z_i$ to the observed variable $Y_i$. The $g_j$ functions are taken non decreasing so that we can interpret small and large values of $Z_i$ corresponding to small and large values of $Y_i$. The $g_j$ functions can also represent the location of the distribution of $Y_i$, and so we do not need to include an intercept in the model. 
+
+$\Psi$ is a correlation matrix, having diagonal entries equal to 1. In this model, the matrix $\Psi$ represents the
 joint dependencies among the variables and the functions $g1,...,gp$ represent their marginal distributions.
 
-The marginal distributions of the $Y_j's$ are fully determined by the $g_j's$ and do
-not depend on the matrix $\Psi$. A model having separate parameters for the
-univariate marginal distributions and the multivariate dependencies is generally called a copula model.
+To see how the $g_j$'s represent the margins, let's calculate the marginal cdf $F_j(y)$ 
 
-In this case the dependence is described by a multivariate gaussian distribution, so we have a multivariate gaussian copula model.
+$$\begin{aligned} F_j(y) &= Pr(y_{i,j} \le y) \\ &= Pr(g_j(Z_{i,j}) \le y) \\  &= Pr(Z_{i,j} \le g_j^{-1}(y)) \\ &= \Phi(g_j^{-1}(y)) \end{aligned}$$
 
-In this case, the functions $g_1,...,g_p$ are nuisance parameters and the parameter of interest is $\Psi$
+where $\Phi(z)$ is the cdf of the standard normal distribution. The last line holds because because the diagonal entries of $\Psi$ are all equal to 1, and so the marginal distribution of each $Z_{i,j}$ is a standard normal distribution with cdf $\Psi(z)$.
+
+<br>
+
+We have shown that $F_j(y) = \Phi(g_j^{-1} (y))$, indicating that the marginal distributions of the $Y_j$'s are fully determined by the $g_j$'s and do not depend on the matrix $\Psi$. A model having separate parameters for the univariate marginal distributions, $g_1,...,g_p$, and the multivariate dependencies, $\Psi$, is called a **copula model**, referring to the method of "coupling" a model for multivariate dependence to a model for the marginal distributions of the data.
+
+In this case the dependence is described by a multivariate gaussian distribution, so we have a **multivariate gaussian copula model**. 
+
+<br>
+<br>
+<br>
+
+## Rank Likelihood for copula estimation
+
+The unknown parameters in the above written copula model are the matrix $\Psi$ and the non-decreasing functions $g_1,...,g_p$. As we are only interested in $\Psi$, we can use a version of the rank likelihood which quantifies information about $Z_1,...,Z_n$ without having to specify the priors for $g_1,...,g_p$. 
+
+Since $g_j$ is non-decreasing:
+
+$$R(Y) = \{ Z : z_{i_1, j} < z_{i_2, j} \quad if \quad y_{i_1, j} < y_{i_2, j} \}$$
+
+So the **rank likelihood for the multivariate normal copula model** $Pr(Z \in R(Y) | \Psi)$ does not depend on $g_1,...,g_p$.
 
 As there is no simple conjugate class of prior distributions for our correlation matrix $\Psi$, let's consider the alternative:
 
-$$Z_1,...,Z_n \sim multivariate \; normal(0, \Sigma)$$
+$$Z_1,...,Z_n \sim multivariate \; normal \; (0, \Sigma)$$
 
-where $\Sigma$ is an arbitrary covariance matrix, not restricted to be a correlation
-matrix like $\Psi$. In this case a natural prior distribution for $\Sigma$ would be an
-inverse-Wishart distribution, which would give an inverse-Wishart full conditional distribution and thus make posterior inference available via Gibbs sampling.
+where $\Sigma$ is an arbitrary covariance matrix, not restricted to be a correlation matrix like $\Psi$. In this case a natural prior distribution for $\Sigma$ would be an inverse-Wishart distribution, which would give an inverse-Wishart full conditional distribution and thus make posterior inference available via Gibbs sampling.
 
-The posterior distribution will be based on:
+<br>
+
+## Posterior distribution
 
 $$\begin{aligned} \Sigma &\sim \mathit{inverse-Wishart}\;(\nu_0,S_0^{-1}) \\ Z_1,...,Z_n &\sim \mathit{multivariate \; normal}\;(0, \Sigma) \\ Y_{i,j} &= g_j(Z_{i,j}) \end{aligned}$$
+
+<br>
+
+## Full conditional distribution of $\Sigma$
+
+the probability density of the $n \times p$ matrix $\textbf{Z}$ is
+
+$$\begin{aligned} p(\textbf{Z}|\Sigma) &= \prod_{i=1}^{n} (2 \pi )^{- \frac{p}{2} } |\Sigma|^{- \frac{1}{2}} \exp{ \left\{ -\frac{1}{2} \textbf{z}_i \Sigma^{-1} \textbf{z}_i \right\} } \\ &= (2 \pi)^{-\frac{np}{2}} |\Sigma|^{-\frac{n}{2}} \exp{ \left\{ - \frac{ tr(\textbf{Z}^T \textbf{Z} \Sigma^{-1} )}{2} \right\} } \end{aligned}$$
+
+So the full conditional is given by
+
+$$\begin{aligned} p(\Sigma | \textbf{Z}, \textbf{Z} \in R(\textbf{Y})) = p(\Sigma | \textbf{Z}) &\propto p(\Sigma) \times p(\textbf{Z}| \Sigma) \\ &\propto |\Sigma|^{- \frac{\nu_0 + p +1}{2}} \exp{ \left\{ - \frac{tr(\textbf{S}_0 \Sigma ^{-1} )}{2} \right\}} \times |\Sigma|^{- \frac{n}{2}} \exp{ \left\{ - \frac{ tr(\textbf{Z}^T \textbf{Z} \Sigma^{-1} )}{2} \right\} } \\ &= |\Sigma|^{- \frac{[\nu_0 + n] + p + 1}{2}} \exp{ \left\{ - \frac{tr([\textbf{S}_0 + \textbf{Z}^T \textbf{Z}]  \Sigma ^{-1} )}{2} \right\}}    \end{aligned}$$
+
+which is proportional to an $\mathit{inverse-Wishart} \; (\nu_0 + n, [\textbf{S}_0 + \textbf{Z}^T \textbf{Z}])$ density.
+
+<br>
+
+## Full conditional distribution of $\textbf{Z}$
+
+$\textbf{Z}$ is a random multivariate normal $(\textbf{0}, \Sigma)$ vector, then the conditional distribution of $Z_j$, given the other elements $\textbf{Z}_{-j} = \textbf{z}_{-j}$, is a univariate normal distribution with mean and variance given by
+
+$$\begin{aligned} \mathbb{E}[Z_j | \Sigma, \textbf{z}_{-j}] &= \Sigma_{j, -j} (\Sigma_{-j, -j})^{-1} \textbf{z}_{-j} \\ \mathbb{Var}[Z_j | \Sigma, \textbf{z}_{-j}] &= \Sigma_{j, j} - \Sigma_{j, -j}(\Sigma_{-j, -j})^{-1} \Sigma_{-j, j} \end{aligned}$$
+
+conditioning on the information that $\textbf{Z} \in R(\textbf{Y})$, then we know that
+
+$$\max \{ z_{k,j} : y_{k,j} < y_{i,j} \} < Z_{i,j} < \min \{ z_{k,j} : y_{i,j} < y_{k,j} \}$$
+
+which implies that the full conditional distribution of $Z_{i,j}$ is a constrained normal distribution.
 
 <br>
 <br>
@@ -839,14 +906,20 @@ cop.cor_post_75 <- ggplot(Cpquant.75, aes(x = x, y = y, fill = value)) +
 
 ## Posterior mean and median of correlation coefficients
 
+<br>
+
 ```{r cop hmpas mm, echo=FALSE, fig.height=5, fig.width=10}
 # Posterior mean of correlation coefficients
 cop.cor_post_mean + cop.cor_post_50
 ```
+
+<br>
 <br>
 <br>
 
 ## Posterior quantiles of correlation coefficients
+
+<br>
 
 ```{r cop hmaps 2575, echo=FALSE, fig.height=5, fig.width=10}
 cop.cor_post_25 + cop.cor_post_75 
