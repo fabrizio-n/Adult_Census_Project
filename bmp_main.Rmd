@@ -1,5 +1,6 @@
 ---
 title: "Bayesian analysis of Adult Census data"
+subtitle: "Bayesian Modelling"
 author: "Fabrizio Niro 5106988"
 date: "18/07/2022"
 output:
@@ -7,7 +8,6 @@ output:
     df_print: paged
   html_notebook:
     theme: readable
-subtitle: Bayesian Modelling
 ---
 
 ```{css, echo=FALSE}
@@ -597,7 +597,7 @@ mcmc_dens(beta_post)
 
 ```{r post intervals, echo=FALSE, fig.height=7, fig.width=10}
 mcmc_intervals(beta_post) + labs(
-  title = "Posterior Central Intervals for $$\beta$$",
+  title = "Posterior Central Intervals for beta",
   subtitle = "with median point estimates, 50% and 95% intervals"
 )
 ```
@@ -630,7 +630,7 @@ prob_inclusion = colMeans(gamma_post)
 ## Posterior probability of inclusion
 
 ```{r post probinc plot, echo=FALSE, fig.height=5, fig.width=10}
-df_probinc <- data.frame(rownames = names(X), probs = prob_inclusion)
+df_probinc <- tibble(rownames = names(X), probs = prob_inclusion)
 
 ggplot(df_probinc) + geom_bar(aes(x = reorder(rownames,-probs),y = probs, fill = probs), 
                               stat = 'identity') + 
@@ -715,13 +715,34 @@ plot_confusion_matrix(conf_mat, palette="Blues")
 # Multivariate Gaussian copula model
 
 ```{r copula data, include=FALSE}
-adult.cop <- as_tibble(adult.train[,c(2,5,7,8,9)])
+adult.cop <- as_tibble(adult.train[,c(1,2,3,5,7,8,9)])
 
+y.cop <- adult.cop[,7]
+X.cop.tmp <- adult.cop[,-7]
+X.cop.tmp <- model.matrix(y~., X.cop.tmp)
 
-fit <- sbgcop.mcmc(Y=adult.cop)
+X.cop <- X.cop.tmp[,-1]
+X.cop <- cbind(X.cop,y.cop)
+
+fit <- sbgcop.mcmc(Y=X.cop)
 ```
 
 ```{r cop plots code, include=FALSE}
+
+sex.cop.plot <- ggplot(adult.cop) +
+  aes(x = sex, fill = sex) +
+  geom_bar() +
+  scale_fill_viridis_d(option = "viridis", direction = 1) +
+  labs(title = "Sex ") +
+  theme_minimal()
+
+race.cop.plot <- ggplot(adult.cop) +
+  aes(x = race, fill = race) +
+  geom_bar() +
+  scale_fill_viridis_d(option = "viridis", direction = 1) +
+  labs(title = "Race") +
+  theme_minimal()
+
 age.cop.plot <- ggplot(adult.cop) +
   aes(x = age) +
   geom_density(adjust = 1L, fill = "#440154") +
@@ -758,14 +779,19 @@ Then we will implement a Multivariate normal model, that is appropriate for all 
 <br>
 
 ```{r cop plots, echo=FALSE, fig.height=5, fig.width=10}
-age.cop.plot + cap.gain.cop.plot + ednum.cop.plot + hpw.cop.plot
+age.cop.plot + 
+  cap.gain.cop.plot + 
+  sex.cop.plot + 
+  ednum.cop.plot + 
+  hpw.cop.plot + 
+  race.cop.plot
 ```
 
 <br>
 
 Letting $Y_1,...,Y_n$ be i.i.d. random samples from a p-variate population, our latent normal model is:
 
-$$\begin{aligned} Z_1,...,Z_n &\sim multivariate \; normal(0, \Psi) \\ Y_{i,j} &= g_j(Z_{i,j}) \end{aligned}$$
+$$\begin{aligned} \textbf{Z}_1,...,\textbf{Z}_n &\sim multivariate \; normal(\textbf{0}, \Psi) \\ Y_{i,j} &= g_j(Z_{i,j}) \end{aligned}$$
 
 where the $g_1,...,g_p$ functions that relate the value of $Z_i$ to the observed variable $Y_i$. The $g_j$ functions are taken non decreasing so that we can interpret small and large values of $Z_i$ corresponding to small and large values of $Y_i$. The $g_j$ functions can also represent the location of the distribution of $Y_i$, and so we do not need to include an intercept in the model. 
 
@@ -776,11 +802,11 @@ To see how the $g_j$'s represent the margins, let's calculate the marginal cdf $
 
 $$\begin{aligned} F_j(y) &= Pr(y_{i,j} \le y) \\ &= Pr(g_j(Z_{i,j}) \le y) \\  &= Pr(Z_{i,j} \le g_j^{-1}(y)) \\ &= \Phi(g_j^{-1}(y)) \end{aligned}$$
 
-where $\Phi(z)$ is the cdf of the standard normal distribution. The last line holds because because the diagonal entries of $\Psi$ are all equal to 1, and so the marginal distribution of each $Z_{i,j}$ is a standard normal distribution with cdf $\Psi(z)$.
+where $\Phi(z)$ is the cdf of the standard normal distribution. The last line holds because because the diagonal entries of $\Psi$ are all equal to 1, and so the marginal distribution of each $Z_{i,j}$ is a standard normal distribution with cdf $\Phi(z)$.
 
 <br>
 
-We have shown that $F_j(y) = \Phi(g_j^{-1} (y))$, indicating that the marginal distributions of the $Y_j$'s are fully determined by the $g_j$'s and do not depend on the matrix $\Psi$. A model having separate parameters for the univariate marginal distributions, $g_1,...,g_p$, and the multivariate dependencies, $\Psi$, is called a **copula model**, referring to the method of "coupling" a model for multivariate dependence to a model for the marginal distributions of the data.
+$F_j(y) = \Phi(g_j^{-1} (y))$ indicates that the marginal distributions of the $Y_j$'s are fully determined by the $g_j$'s and do not depend on the matrix $\Psi$. A model having separate parameters for the univariate marginal distributions, $g_1,...,g_p$, and the multivariate dependencies, $\Psi$, is called a **copula model**, referring to the method of "coupling" a model for multivariate dependence to a model for the marginal distributions of the data.
 
 In this case the dependence is described by a multivariate gaussian distribution, so we have a **multivariate gaussian copula model**. 
 
@@ -788,45 +814,56 @@ In this case the dependence is described by a multivariate gaussian distribution
 <br>
 <br>
 
-## Rank Likelihood for copula estimation
+## Rank likelihood for copula estimation
+
+<br>
 
 The unknown parameters in the above written copula model are the matrix $\Psi$ and the non-decreasing functions $g_1,...,g_p$. As we are only interested in $\Psi$, we can use a version of the rank likelihood which quantifies information about $Z_1,...,Z_n$ without having to specify the priors for $g_1,...,g_p$. 
 
 Since $g_j$ is non-decreasing:
 
-$$R(Y) = \{ Z : z_{i_1, j} < z_{i_2, j} \quad if \quad y_{i_1, j} < y_{i_2, j} \}$$
+$$R(\textbf{Y}) = \{ \textbf{Z} : z_{i_1, j} < z_{i_2, j} \quad if \quad y_{i_1, j} < y_{i_2, j} \}$$
 
 So the **rank likelihood for the multivariate normal copula model** $Pr(Z \in R(Y) | \Psi)$ does not depend on $g_1,...,g_p$.
 
 As there is no simple conjugate class of prior distributions for our correlation matrix $\Psi$, let's consider the alternative:
 
-$$Z_1,...,Z_n \sim multivariate \; normal \; (0, \Sigma)$$
+$$\textbf{Z}_1,...,\textbf{Z}_n \sim multivariate \; normal \; (\textbf{0}, \Sigma)$$
 
 where $\Sigma$ is an arbitrary covariance matrix, not restricted to be a correlation matrix like $\Psi$. In this case a natural prior distribution for $\Sigma$ would be an inverse-Wishart distribution, which would give an inverse-Wishart full conditional distribution and thus make posterior inference available via Gibbs sampling.
 
-<br>
+Then to each covariance matrix $\Sigma$ there corresponds a unique correlation matrix $\Psi$, obtained by the function:
 
-## Posterior distribution
-
-$$\begin{aligned} \Sigma &\sim \mathit{inverse-Wishart}\;(\nu_0,S_0^{-1}) \\ Z_1,...,Z_n &\sim \mathit{multivariate \; normal}\;(0, \Sigma) \\ Y_{i,j} &= g_j(Z_{i,j}) \end{aligned}$$
+$$\Psi = h(\Sigma) = \left\{ \sigma_{i,j} / \sqrt{\sigma^2_i \sigma^2_j} \right\}$$
 
 <br>
 
-## Full conditional distribution of $\Sigma$
+## Posterior distribution {.tabset}
+
+<br>
+
+$$\begin{aligned} \Sigma &\sim \mathit{inverse-Wishart}\;(\nu_0,\textbf{S}_0^{-1}) \\ \textbf{Z}_1,...,\textbf{Z}_n &\sim \mathit{multivariate \; normal}\;(\textbf{0}, \Sigma) \\ Y_{i,j} &= g_j(Z_{i,j}) \end{aligned}$$
+
+<br>
+
+### Full conditional distribution of $\Sigma$
 
 the probability density of the $n \times p$ matrix $\textbf{Z}$ is
 
-$$\begin{aligned} p(\textbf{Z}|\Sigma) &= \prod_{i=1}^{n} (2 \pi )^{- \frac{p}{2} } |\Sigma|^{- \frac{1}{2}} \exp{ \left\{ -\frac{1}{2} \textbf{z}_i \Sigma^{-1} \textbf{z}_i \right\} } \\ &= (2 \pi)^{-\frac{np}{2}} |\Sigma|^{-\frac{n}{2}} \exp{ \left\{ - \frac{ tr(\textbf{Z}^T \textbf{Z} \Sigma^{-1} )}{2} \right\} } \end{aligned}$$
+$$\begin{aligned} p(\textbf{Z}|\Sigma) &= \prod_{i=1}^{n} (2 \pi )^{- \frac{p}{2} } |\Sigma|^{- \frac{1}{2}} \exp{ \left\{ -\frac{1}{2} \textbf{z}_i \Sigma^{-1} \textbf{z}_i \right\} } \\ 
+&= (2 \pi)^{-np/2} |\Sigma|^{-n/2} \exp{ \left\{ - tr(\textbf{Z}^T \textbf{Z} \Sigma^{-1} )/2 \right\} } \end{aligned}$$
 
 So the full conditional is given by
 
-$$\begin{aligned} p(\Sigma | \textbf{Z}, \textbf{Z} \in R(\textbf{Y})) = p(\Sigma | \textbf{Z}) &\propto p(\Sigma) \times p(\textbf{Z}| \Sigma) \\ &\propto |\Sigma|^{- \frac{\nu_0 + p +1}{2}} \exp{ \left\{ - \frac{tr(\textbf{S}_0 \Sigma ^{-1} )}{2} \right\}} \times |\Sigma|^{- \frac{n}{2}} \exp{ \left\{ - \frac{ tr(\textbf{Z}^T \textbf{Z} \Sigma^{-1} )}{2} \right\} } \\ &= |\Sigma|^{- \frac{[\nu_0 + n] + p + 1}{2}} \exp{ \left\{ - \frac{tr([\textbf{S}_0 + \textbf{Z}^T \textbf{Z}]  \Sigma ^{-1} )}{2} \right\}}    \end{aligned}$$
+$$\begin{aligned} p(\Sigma | \textbf{Z}, \textbf{Z} \in R(\textbf{Y})) = p(\Sigma | \textbf{Z}) &\propto p(\Sigma) \times p(\textbf{Z}| \Sigma) \\ 
+&\propto |\Sigma|^{- (\nu_0 + p +1)/2} \exp{ \left\{ -tr(\textbf{S}_0 \Sigma ^{-1} )/2 \right\}} \times |\Sigma|^{- n/2} \exp{ \left\{ - tr(\textbf{Z}^T \textbf{Z} \Sigma^{-1} )/2 \right\} } \\ 
+&= |\Sigma|^{- ([\nu_0 + n] + p + 1)/2} \exp{ \left\{ - tr([\textbf{S}_0 + \textbf{Z}^T \textbf{Z}]  \Sigma ^{-1} )/2 \right\}}    \end{aligned}$$
 
-which is proportional to an $\mathit{inverse-Wishart} \; (\nu_0 + n, [\textbf{S}_0 + \textbf{Z}^T \textbf{Z}])$ density.
+which is proportional to an $\mathit{inverse-Wishart} \; (\nu_0 + n, [\textbf{S}_0 + \textbf{Z}^T \textbf{Z}]^{-1})$ density.
 
 <br>
 
-## Full conditional distribution of $\textbf{Z}$
+### Full conditional distribution of $\textbf{Z}$
 
 $\textbf{Z}$ is a random multivariate normal $(\textbf{0}, \Sigma)$ vector, then the conditional distribution of $Z_j$, given the other elements $\textbf{Z}_{-j} = \textbf{z}_{-j}$, is a univariate normal distribution with mean and variance given by
 
@@ -838,15 +875,26 @@ $$\max \{ z_{k,j} : y_{k,j} < y_{i,j} \} < Z_{i,j} < \min \{ z_{k,j} : y_{i,j} <
 
 which implies that the full conditional distribution of $Z_{i,j}$ is a constrained normal distribution.
 
+##
+
 <br>
 <br>
 
 ```{r cop hetmaps code, echo=FALSE}
 Cpsamp <- fit$C.psamp
 
+# Get lower triangle function
+get_lower_tri<-function(cor){
+  cor[upper.tri(cor)] <- NA
+  return(cor)
+}
+
+# Mean
 cor_array_mean <- apply(Cpsamp, 1:2, mean)
-cor_mean <- melt(cor_array_mean)
+cor_mean <- get_lower_tri(cor_array_mean)
+cor_mean <- melt(cor_mean, na.rm=TRUE)
 colnames(cor_mean) <- c("x", "y", "value")
+
 
 # Posterior mean of correlation coefficients
 cop.cor_post_mean <- ggplot(cor_mean, aes(x = x, y = y, fill = value)) + 
@@ -855,6 +903,7 @@ cop.cor_post_mean <- ggplot(cor_mean, aes(x = x, y = y, fill = value)) +
   geom_text(aes(label = round(value, 2)), color = "white", size = 4) +
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 30, vjust = 1, hjust=1),
+        axis.text.y = element_blank(),
         plot.title = element_text(size = 12L),
         axis.title.x=element_blank(), 
         axis.title.y = element_blank()) + coord_fixed()
@@ -862,11 +911,17 @@ cop.cor_post_mean <- ggplot(cor_mean, aes(x = x, y = y, fill = value)) +
 
 # Posterior quantiles of correlation coefficients
 Cpquant <- qM.sM(Cpsamp, quantiles = c(0.025, 0.5, 0.975))
-Cpquant.25 <- melt(Cpquant[,,1])
+
+Cpquant.25 <- get_lower_tri(Cpquant[,,1])
+Cpquant.25 <- melt(Cpquant.25, na.rm=TRUE)
 colnames(Cpquant.25) <- c("x", "y", "value")
-Cpquant.50 <- melt(Cpquant[,,2])
+
+Cpquant.50 <- get_lower_tri(Cpquant[,,2])
+Cpquant.50 <- melt(Cpquant.50, na.rm=TRUE)
 colnames(Cpquant.50) <- c("x", "y", "value")
-Cpquant.75 <- melt(Cpquant[,,3])
+
+Cpquant.75 <- get_lower_tri(Cpquant[,,3])
+Cpquant.75 <- melt(Cpquant.75, na.rm=TRUE)
 colnames(Cpquant.75) <- c("x", "y", "value")
 
 
@@ -877,6 +932,7 @@ cop.cor_post_25 <- ggplot(Cpquant.25, aes(x = x, y = y, fill = value)) +
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 30, vjust = 1, hjust=1),
                                    plot.title = element_text(size = 12L),
+        axis.text.y = element_blank(),
         axis.title.x=element_blank(), 
         axis.title.y = element_blank()) + coord_fixed()
 
@@ -886,7 +942,7 @@ cop.cor_post_50 <- ggplot(Cpquant.50, aes(x = x, y = y, fill = value)) +
   geom_text(aes(label = round(value, 2)), color = "white", size = 4) +
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 30, vjust = 1, hjust=1),
-        axis.text.y = element_blank(),
+        axis.text.y = element_text(hjust = 0),
         plot.title = element_text(size = 12L),
         axis.title.x=element_blank(), 
         axis.title.y = element_blank()) + coord_fixed()
@@ -897,7 +953,7 @@ cop.cor_post_75 <- ggplot(Cpquant.75, aes(x = x, y = y, fill = value)) +
   geom_text(aes(label = round(value, 2)), color = "white", size = 4) +
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 30, vjust = 1, hjust=1),
-        axis.text.y = element_blank(),
+        axis.text.y = element_text(hjust = 0),
         plot.title = element_text(size = 12L),
         axis.title.x=element_blank(), 
         axis.title.y = element_blank()) + coord_fixed()
@@ -922,23 +978,25 @@ cop.cor_post_mean + cop.cor_post_50
 <br>
 
 ```{r cop hmaps 2575, echo=FALSE, fig.height=5, fig.width=10}
-cop.cor_post_25 + cop.cor_post_75 
+cop.cor_post_25 + cop.cor_post_75  
 ```
 
 <br>
 <br>
 
-We are also interested in the “regression coefficients”
+## Regression coefficients
+
+<br>
 
 $$\beta_{j|-j} = \Sigma_{j,-j} (\Sigma_{-j,-j})^{-1}$$
-which for each variable $j$ is a vector of length $j-1$ that describes how the conditional mean of $Z_j$ depends on the remaining variables $Z_{-j}$
+For each variable $j$ is a vector of length $j-1$ that describes how the conditional mean of $Z_j$ depends on the remaining variables $Z_{-j}$
 
 A 95% quantile-based confidence interval is obtained for each $\beta_{j,k}$. If the confidence interval does not contain zero, this means that there is strong evidence of a conditional dependence, with a “+” or a “−” indicating the sign of the posterior median. If the interval does contain zero, there is no conditional dependence between the variables.
 
 <br>
 
 ```{r cop QR summ, echo=FALSE}
-fit.QR <- summary(fit)$QR[c(17:20),]
+fit.QR <- summary(fit)$QR [c(50:56),]
 
 knitr::kable(fit.QR, caption = "95% quantiles for regression coefficients")
 ```
@@ -959,12 +1017,10 @@ According to the posterior probability of inclusion, the most important, i.e. th
 - **raceWhite**
 - **sexMale**
 
-Furthermore, we can say that all of them have a positive impact on the posterior probabilities of being classified in the **Income** class ">50K". An important result is that the Native region doesn't seem to have inluence, as all the intervals contain zero and the posterior probability of inclusion is relatively low, according to the data coming from the Adult Census of 1994. Also **workclassPrivate** and **workclassGovernment** seem to have small to no impact on the parameter, while **workclassOther**, which includes also Self-Employed workers, is included in more than 80% of the cases, even though the posterior 95% credible interval contains the zero.
-
-The results obtained from the **Multivariate gaussian copula model** show that the covariates generally have a low, positive correlation among each other. We find the highest correlations with respect to the **"income"** response variable. 
-Additionally, the regression coefficients given by the model, describe how the conditional mean of the response variable **"Income"** depends on the remaining variables. In the detail, we have that all the variables have a positive effect on the response. While the highest median value recorded concerns the variable **education_num** which measure the total years of education, follow the **Age**, the amount of working hours per week **hours_per_week** and **capital_gain**. 
+Furthermore, we can say that all of them have a positive effect on the posterior probabilities of being classified in the **Income** class ">50K". An important result is that the Native region doesn't seem to have inluence, as all the intervals contain zero and the posterior probability of inclusion is relatively low, according to the data. Also **workclassPrivate** and **workclassGovernment** seem to have small to no impact on the parameter, while **workclassOther** is included in more than 80% of the cases, even though the posterior 95% credible interval contains the zero.
 
 
+The results obtained from the **Multivariate gaussian copula model** show that there isn't strong evidence of a conditional dependence between **income** and **sexMale**, given the other variables, despite they have positive correlation. However, there is evidence of conditional dependence between **income** and all the other variables (**age**, **raceOther**, **raceWhite**, **education_num**, **hours_per_week** and **capital_gain**). **income~raceWhite** has a high posterior positive median, which indicates a strong evidence of conditional dependence between the variables. 
 
 
 
